@@ -1,4 +1,5 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import axios from 'axios';
 import helmet from 'helmet';
 import { loadEnv, type GatewayEnv } from './config/env';
 import { requestLogger, logger } from './middlewares/requestLogger';
@@ -41,6 +42,23 @@ export const createApp = (options: CreateAppOptions = {}): Express => {
         event: 'request_failed',
         message: error instanceof Error ? error.message : String(error),
       });
+      // When wePAY itself answered with an error status, pass its code and
+      // description on. Without this the backend only sees "502".
+      const upstream = axios.isAxiosError(error) ? error.response : undefined;
+      if (upstream) {
+        const body: Record<string, unknown> =
+          upstream.data && typeof upstream.data === 'object'
+            ? (upstream.data as Record<string, unknown>)
+            : { raw: String(upstream.data ?? '').slice(0, 500) };
+        res.status(502).json({
+          error: 'wePAY rejected the request',
+          upstreamStatus: upstream.status,
+          code: body.code,
+          desc: body.desc,
+          upstream: body,
+        });
+        return;
+      }
       res.status(502).json({ error: 'Gateway request failed' });
     }
   );
